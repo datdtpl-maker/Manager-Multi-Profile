@@ -397,6 +397,48 @@ class ExtensionService {
     throw new Error(`Nguồn gốc "${src}" không phải thư mục hoặc file .zip hợp lệ.`);
   }
 
+  async updateExtensionFromUrl(extensionId, zipUrlRaw) {
+    const id = clean(extensionId);
+    const zipUrl = clean(zipUrlRaw);
+    if (!/^https?:\/\//i.test(zipUrl)) {
+      throw new Error("URL tải file .zip không hợp lệ (phải bắt đầu bằng http:// hoặc https://).");
+    }
+    const registryBefore = this.loadRegistry();
+    const existing = registryBefore.extensions.find((item) => item.id === id);
+    if (!existing) throw new Error("Không tìm thấy extension trong kho.");
+    const prevSourcePath = existing.sourcePath;
+
+    const resp = await fetch(zipUrl, { redirect: "follow" });
+    if (!resp.ok) {
+      throw new Error(`Không tải được file .zip từ URL (HTTP ${resp.status}).`);
+    }
+    const buffer = Buffer.from(await resp.arrayBuffer());
+    if (buffer.length < 100) {
+      throw new Error("File tải về quá nhỏ hoặc không phải file .zip hợp lệ.");
+    }
+
+    const tempZip = path.join(os.tmpdir(), `mmp-remote-ext-${Date.now()}.zip`);
+    try {
+      fs.writeFileSync(tempZip, buffer);
+      const res = this.updateExtensionFromZip(id, tempZip);
+      // Keep original local sourcePath if it existed, and save remoteZipUrl for future 1-click remote updates
+      const registryAfter = this.loadRegistry();
+      const target = registryAfter.extensions.find((item) => item.id === id);
+      if (target) {
+        target.remoteZipUrl = zipUrl;
+        if (prevSourcePath && prevSourcePath !== tempZip) {
+          target.sourcePath = prevSourcePath;
+        }
+        this.saveRegistry(registryAfter);
+      }
+      return res;
+    } finally {
+      try {
+        fs.rmSync(tempZip, { force: true });
+      } catch {}
+    }
+  }
+
   updateAllExtensionsFromSource() {
     const registry = this.loadRegistry();
     if (!registry.extensions.length) {

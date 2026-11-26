@@ -76,7 +76,17 @@ function csvCell(value) {
 }
 
 const extensionService = new ExtensionService(getStorageRoot);
-const browserService = new BrowserService(app, { getStorageRoot, extensionService });
+const browserService = new BrowserService(app, {
+  getStorageRoot,
+  extensionService,
+  onOpenChange: (openUids) => {
+    for (const win of BrowserWindow.getAllWindows()) {
+      if (!win.isDestroyed()) {
+        win.webContents.send("browser:open-changed", openUids);
+      }
+    }
+  },
+});
 
 function createWindow() {
   const window = new BrowserWindow({
@@ -241,6 +251,35 @@ app.whenReady().then(() => {
     });
   });
 
+  ipcMain.handle("accounts:bulk-create", (_event, payload) => {
+    const prefs = loadPreferences();
+    const items = Array.isArray(payload?.accounts) ? payload.accounts : [];
+    if (!items.length) throw new Error("Danh sách profile nhập hàng loạt đang trống.");
+    let createdCount = 0;
+    let skippedCount = 0;
+    const errors = [];
+    for (const item of items) {
+      try {
+        createAccount(prefs.databasePath, item, {
+          storageRoot: prefs.storageRoot,
+          cookiesDir: getCookiesDir(),
+          defaultStartUrl: prefs.defaultStartUrl,
+        });
+        createdCount += 1;
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        if (msg.includes("đã tồn tại")) skippedCount += 1;
+        else errors.push(`${item?.UID || "?"}: ${msg}`);
+      }
+    }
+    return {
+      createdCount,
+      skippedCount,
+      errors,
+      message: `Đã nhập ${createdCount} profile mới${skippedCount ? `, bỏ qua ${skippedCount} trùng UID` : ""}${errors.length ? `, ${errors.length} lỗi` : ""}.`,
+    };
+  });
+
   ipcMain.handle("accounts:update-account", (_event, payload) => {
     const prefs = loadPreferences();
     return updateAccount(prefs.databasePath, payload, {
@@ -288,7 +327,44 @@ app.whenReady().then(() => {
       payload?.mode || "open",
       prefs.defaultStartUrl,
       payload?.overrideUrl || "",
+      payload?.windowBounds || null,
     );
+  });
+
+  ipcMain.handle("browser:save-cookies-bulk", async (_event, uidsRaw) => {
+    const prefs = loadPreferences();
+    const openSet = new Set(browserService.getOpenUids());
+    const targets = Array.isArray(uidsRaw) && uidsRaw.length
+      ? uidsRaw.filter((u) => openSet.has(u))
+      : [...openSet];
+    if (!targets.length) throw new Error("Không có profile nào đang mở để lưu cookie.");
+    let savedCount = 0;
+    const failed = [];
+    for (const uid of targets) {
+      try {
+        const saved = await browserService.saveCookies(uid);
+        saveAccountSession(
+          prefs.databasePath,
+          {
+            uid: saved.uid,
+            status: saved.statusLabel,
+            cookieHeader: saved.cookieJson,
+            updateCookie: true,
+            platform: saved.platform,
+          },
+          { storageRoot: prefs.storageRoot, cookiesDir: getCookiesDir() },
+        );
+        savedCount += 1;
+      } catch (err) {
+        failed.push(`${uid}: ${err instanceof Error ? err.message : String(err)}`);
+      }
+    }
+    return {
+      savedCount,
+      total: targets.length,
+      failed,
+      message: `Đã lưu cookie thành công cho ${savedCount}/${targets.length} profile đang mở${failed.length ? ` (${failed.length} lỗi)` : ""}.`,
+    };
   });
 
   ipcMain.handle("browser:save-cookies", async (_event, uid) => {
@@ -363,6 +439,9 @@ app.whenReady().then(() => {
     if (picked.canceled || !picked.filePaths[0]) return null;
     return extensionService.updateExtensionFromZip(extensionId, picked.filePaths[0]);
   });
+  ipcMain.handle("extensions:update-url", (_event, payload) =>
+    extensionService.updateExtensionFromUrl(payload?.extensionId, payload?.zipUrl),
+  );
   ipcMain.handle("extensions:bulk-install", (_event, payload) => extensionService.bulkInstallExtensions(payload || {}));
   ipcMain.handle("extensions:bulk-uninstall", (_event, payload) => extensionService.bulkUninstallExtensions(payload || {}));
 

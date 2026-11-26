@@ -93,9 +93,32 @@ function parseProxyConfig(rawProxy) {
   return undefined;
 }
 
-function browserLaunchOptions(profileDir, { headless = false, extensionPaths = [], proxy } = {}) {
+async function positionWindow(context, page, bounds) {
+  if (!page || !bounds) return;
+  try {
+    await page.bringToFront().catch(() => {});
+  } catch {}
+  try {
+    const session = await context.newCDPSession(page);
+    const { windowId } = await session.send("Browser.getWindowForTarget");
+    if (windowId) {
+      await session.send("Browser.setWindowBounds", {
+        windowId,
+        bounds: {
+          windowState: "normal",
+          left: Math.max(0, Math.round(bounds.x)),
+          top: Math.max(0, Math.round(bounds.y)),
+          width: Math.max(420, Math.round(bounds.width)),
+          height: Math.max(360, Math.round(bounds.height)),
+        },
+      });
+    }
+    await session.detach().catch(() => {});
+  } catch {}
+}
+
+function browserLaunchOptions(profileDir, { headless = false, extensionPaths = [], proxy, windowBounds } = {}) {
   const args = [
-    "--start-maximized",
     "--disable-blink-features=AutomationControlled",
     "--disable-infobars",
     "--no-default-browser-check",
@@ -106,6 +129,15 @@ function browserLaunchOptions(profileDir, { headless = false, extensionPaths = [
     "--disable-backgrounding-occluded-windows",
     "--disable-renderer-backgrounding",
   ];
+
+  if (windowBounds && Number.isFinite(windowBounds.width) && Number.isFinite(windowBounds.height)) {
+    args.unshift(
+      `--window-position=${Math.max(0, Math.round(windowBounds.x || 0))},${Math.max(0, Math.round(windowBounds.y || 0))}`,
+      `--window-size=${Math.max(420, Math.round(windowBounds.width))},${Math.max(360, Math.round(windowBounds.height))}`,
+    );
+  } else {
+    args.unshift("--start-maximized");
+  }
 
   const validExtensions = (Array.isArray(extensionPaths) ? extensionPaths : []).filter(
     (dir) => dir && fs.existsSync(path.join(dir, "manifest.json")),
@@ -263,12 +295,21 @@ function detectSessionState(cookies, currentUrl) {
 }
 
 class BrowserService {
-  constructor(app, { getStorageRoot, extensionService }) {
+  constructor(app, { getStorageRoot, extensionService, onOpenChange }) {
     this.app = app;
     this.getStorageRoot = getStorageRoot;
     this.extensionService = extensionService;
+    this.onOpenChange = typeof onOpenChange === "function" ? onOpenChange : null;
     this.modulePromise = null;
     this.sessions = new Map();
+  }
+
+  notifyOpenChange() {
+    if (this.onOpenChange) {
+      try {
+        this.onOpenChange(this.getOpenUids());
+      } catch {}
+    }
   }
 
   async module() {
@@ -351,7 +392,7 @@ class BrowserService {
     };
   }
 
-  async launch(account, mode = "open", defaultStartUrl = DEFAULT_TIKTOK_URL, overrideUrl = "") {
+  async launch(account, mode = "open", defaultStartUrl = DEFAULT_TIKTOK_URL, overrideUrl = "", windowBounds = null) {
     if (!account || typeof account !== "object") throw new Error("Dữ liệu profile không hợp lệ.");
     if (!["open", "cookie"].includes(mode)) throw new Error("Chế độ mở trình duyệt không hợp lệ.");
     const uid = clean(account.UID);
@@ -365,7 +406,8 @@ class BrowserService {
     const existing = this.sessions.get(uid);
     if (existing) {
       const page = existing.pages()[0] || (await existing.newPage());
-      await maximizeWindow(existing, page);
+      if (windowBounds) await positionWindow(existing, page, windowBounds);
+      else await maximizeWindow(existing, page);
       if (cleanOverride) {
         await page.goto(targetUrl, { waitUntil: "domcontentloaded", timeout: 45_000 }).catch(() => {});
         return {
@@ -393,7 +435,7 @@ class BrowserService {
     const cloak = await this.module();
     const profileDir = this.profilePath(uid);
     fs.mkdirSync(profileDir, { recursive: true });
-    ensureProfileMaximizedPreference(profileDir);
+    if (!windowBounds) ensureProfileMaximizedPreference(profileDir);
 
     const extensionPaths = this.extensionService
       ? this.extensionService.getResolvedExtensionPathsForProfile(uid)
@@ -403,15 +445,22 @@ class BrowserService {
       headless: false,
       extensionPaths,
       proxy,
+      windowBounds,
     });
 
     const context = await cloak.launchPersistentContext(options);
     this.sessions.set(uid, context);
-    context.on("close", () => this.sessions.delete(uid));
+    this.notifyOpenChange();
+    context.on("close", () => {
+      if (this.sessions.delete(uid)) {
+        this.notifyOpenChange();
+      }
+    });
 
     try {
       const page = context.pages()[0] || (await context.newPage());
-      await maximizeWindow(context, page);
+      if (windowBounds) await positionWindow(context, page, windowBounds);
+      else await maximizeWindow(context, page);
 
       if (mode === "cookie" && cookiesToInject && cookiesToInject.length) {
         await context.addCookies(cookiesToInject);
@@ -492,6 +541,7 @@ class BrowserService {
     const context = this.sessions.get(key);
     if (!context) return { closed: false };
     this.sessions.delete(key);
+    this.notifyOpenChange();
     await context.close().catch(() => {});
     return { closed: true };
   }

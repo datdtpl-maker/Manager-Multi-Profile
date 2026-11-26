@@ -18,6 +18,7 @@ contextBridge.exposeInMainWorld("mmp", {
   deleteAccountGroup: (payload) => ipcRenderer.invoke("accounts:delete-group", payload),
   moveAccountsToGroup: (payload) => ipcRenderer.invoke("accounts:move-to-group", payload),
   createAccount: (payload) => ipcRenderer.invoke("accounts:create-account", payload),
+  bulkCreateAccounts: (payload) => ipcRenderer.invoke("accounts:bulk-create", payload),
   updateAccount: (payload) => ipcRenderer.invoke("accounts:update-account", payload),
   deleteAccounts: (uids) => ipcRenderer.invoke("accounts:delete-accounts", uids),
   exportAccounts: (payload) => ipcRenderer.invoke("accounts:export", payload),
@@ -28,8 +29,15 @@ contextBridge.exposeInMainWorld("mmp", {
   updateBrowser: () => ipcRenderer.invoke("browser:update"),
   generateTotp: (secret) => ipcRenderer.invoke("browser:totp", secret),
   getOpenProfiles: () => ipcRenderer.invoke("browser:open-uids"),
+  onOpenProfilesChanged: (listener) => {
+    if (typeof listener !== "function") return () => {};
+    const wrapped = (_event, uids) => listener(Array.isArray(uids) ? uids : []);
+    ipcRenderer.on("browser:open-changed", wrapped);
+    return () => ipcRenderer.removeListener("browser:open-changed", wrapped);
+  },
   launchBrowser: (payload) => ipcRenderer.invoke("browser:launch", payload),
   saveBrowserCookies: (uid) => ipcRenderer.invoke("browser:save-cookies", uid),
+  saveBrowserCookiesBulk: (uids) => ipcRenderer.invoke("browser:save-cookies-bulk", uids),
   closeBrowser: (uid) => ipcRenderer.invoke("browser:close", uid),
 
   // Extensions
@@ -42,6 +50,7 @@ contextBridge.exposeInMainWorld("mmp", {
   updateExtensionFromSource: (extensionId) => ipcRenderer.invoke("extensions:update-source", extensionId),
   updateExtensionFromFolder: (extensionId) => ipcRenderer.invoke("extensions:update-folder", extensionId),
   updateExtensionFromZip: (extensionId) => ipcRenderer.invoke("extensions:update-zip", extensionId),
+  updateExtensionFromUrl: (payload) => ipcRenderer.invoke("extensions:update-url", payload),
   bulkInstallExtensions: (payload) => ipcRenderer.invoke("extensions:bulk-install", payload),
   bulkUninstallExtensions: (payload) => ipcRenderer.invoke("extensions:bulk-uninstall", payload),
 

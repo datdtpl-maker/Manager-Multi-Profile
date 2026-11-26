@@ -256,6 +256,32 @@ export function SettingsExtensionsWorkspace({
     }
   };
 
+  const handleUpdateExtUrl = async (ext: ExtensionItem) => {
+    const defaultUrl =
+      ext.remoteZipUrl ||
+      (ext.name.toLowerCase().includes("tiktok")
+        ? "https://github.com/datdtpl-maker/TikTok-Auto-Reply-Extension/archive/refs/heads/main.zip"
+        : "");
+    const zipUrl = window.prompt(
+      `Nhập link tải file .ZIP (GitHub) để cập nhật "${ext.name}":`,
+      defaultUrl,
+    );
+    if (!zipUrl || !zipUrl.trim()) return;
+    setBusyAction(`upd-url-${ext.id}`);
+    try {
+      const res = await window.mmp.updateExtensionFromUrl({
+        extensionId: ext.id,
+        zipUrl: zipUrl.trim(),
+      });
+      await onRefreshAll();
+      onNotify("success", res.message);
+    } catch (err) {
+      onNotify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setBusyAction("");
+    }
+  };
+
   const handleBulkInstall = async () => {
     if (!activeExtIds.length) {
       onNotify("error", "Hãy chọn ít nhất 1 extension ở bước 1.");
@@ -523,6 +549,16 @@ export function SettingsExtensionsWorkspace({
                         onClick={() => handleUpdateExtZip(ext)}
                       >
                         .ZIP
+                      </button>
+                      <button
+                        type="button"
+                        className="mmp-mini-action"
+                        disabled={Boolean(busyAction)}
+                        title="Tải trực tiếp bản mới nhất từ link GitHub ZIP (không cần tải tay)"
+                        onClick={() => handleUpdateExtUrl(ext)}
+                      >
+                        <Globe2 size={12} className={busyAction === `upd-url-${ext.id}` ? "spin" : ""} />
+                        GitHub
                       </button>
                       <button
                         type="button"

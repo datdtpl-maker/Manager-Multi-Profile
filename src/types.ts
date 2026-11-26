@@ -78,6 +78,7 @@ export interface ExtensionItem {
   manifestVersion: number;
   dirPath: string;
   sourcePath: string;
+  remoteZipUrl?: string;
   addedAt: string;
   exists: boolean;
   installedProfileCount: number;
@@ -143,6 +144,7 @@ declare global {
       deleteAccountGroup: (payload: { groupName: string; moveToGroup?: string }) => Promise<{ groupName: string; deleted: boolean; movedAccounts: number; moveToGroup: string; backupPath: string; message: string }>;
       moveAccountsToGroup: (payload: { uids: string[]; groupName: string }) => Promise<{ groupName: string; moved: number; backupPath: string; message: string }>;
       createAccount: (payload: Partial<AccountRow> & { UID: string }) => Promise<{ uid: string; created: boolean; backupPath?: string; message: string }>;
+      bulkCreateAccounts: (payload: { accounts: Array<Partial<AccountRow> & { UID: string }> }) => Promise<{ createdCount: number; skippedCount: number; errors: string[]; message: string }>;
       updateAccount: (payload: Partial<AccountRow> & { UID: string }) => Promise<{ uid: string; updated: boolean; backupPath?: string; message: string }>;
       deleteAccounts: (uids: string[]) => Promise<{ deleted: number; backupPath?: string; message: string }>;
       exportAccounts: (payload: ExportPayload) => Promise<{ canceled: boolean; filePath?: string; count?: number }>;
@@ -152,8 +154,10 @@ declare global {
       updateBrowser: () => Promise<BrowserUpdateResult>;
       generateTotp: (secret: string) => Promise<{ code: string; expiresIn: number }>;
       getOpenProfiles: () => Promise<string[]>;
-      launchBrowser: (payload: { account: AccountRow; mode: "open" | "cookie"; overrideUrl?: string }) => Promise<BrowserLaunchResult>;
+      onOpenProfilesChanged: (listener: (uids: string[]) => void) => () => void;
+      launchBrowser: (payload: { account: AccountRow; mode: "open" | "cookie"; overrideUrl?: string; windowBounds?: { x: number; y: number; width: number; height: number } | null }) => Promise<BrowserLaunchResult>;
       saveBrowserCookies: (uid: string) => Promise<BrowserCookieResult>;
+      saveBrowserCookiesBulk: (uids?: string[]) => Promise<{ savedCount: number; total: number; failed: string[]; message: string }>;
       closeBrowser: (uid: string) => Promise<{ closed: boolean }>;
 
       listExtensions: () => Promise<ExtensionItem[]>;
@@ -165,6 +169,7 @@ declare global {
       updateExtensionFromSource: (extensionId: string) => Promise<ExtensionUpdateResult>;
       updateExtensionFromFolder: (extensionId: string) => Promise<ExtensionUpdateResult | null>;
       updateExtensionFromZip: (extensionId: string) => Promise<ExtensionUpdateResult | null>;
+      updateExtensionFromUrl: (payload: { extensionId: string; zipUrl: string }) => Promise<ExtensionUpdateResult>;
       bulkInstallExtensions: (payload: { extensionIds: string[]; profileUids: string[]; skipInstalled?: boolean }) => Promise<BulkInstallExtensionsResult>;
       bulkUninstallExtensions: (payload: { extensionIds: string[]; profileUids: string[] }) => Promise<{ removedCount: number; totalProfiles: number; message: string }>;
 

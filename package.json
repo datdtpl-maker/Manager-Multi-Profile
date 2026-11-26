@@ -1,6 +1,6 @@
 {
   "name": "manager-multi-profile",
-  "version": "1.0.3",
+  "version": "1.0.4",
   "private": true,
   "author": "Personal Desktop App",
   "description": "Manager Multi Profile — quản lý nhiều profile trình duyệt, nhóm tài khoản, lưu database/cookies và cài đặt extension hàng loạt (hỗ trợ đăng nhập & treo tài khoản TikTok).",

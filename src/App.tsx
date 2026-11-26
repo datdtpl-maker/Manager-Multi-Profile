@@ -176,9 +176,15 @@ export function App() {
   const [bulkUrlMode, setBulkUrlMode] = useState<"profile" | "custom">("custom");
   const [bulkCustomUrl, setBulkCustomUrl] = useState("https://www.tiktok.com/");
   const [bulkLaunchMode, setBulkLaunchMode] = useState<"open" | "cookie">("open");
+  const [bulkWindowLayout, setBulkWindowLayout] = useState<"maximized" | "grid-2x2" | "grid-3x2">("maximized");
   const [bulkDelaySeconds, setBulkDelaySeconds] = useState(1.5);
   const [bulkSaveAsDefaultUrl, setBulkSaveAsDefaultUrl] = useState(false);
   const [bulkLaunching, setBulkLaunching] = useState<{ current: number; total: number } | null>(null);
+  const [savingBulkCookies, setSavingBulkCookies] = useState(false);
+  const [showBulkImport, setShowBulkImport] = useState(false);
+  const [bulkImportText, setBulkImportText] = useState("");
+  const [bulkImportGroup, setBulkImportGroup] = useState("Không có nhóm");
+  const [bulkImportPlatform, setBulkImportPlatform] = useState("TikTok");
   const [showAddProfile, setShowAddProfile] = useState(false);
   const [newProfileDraft, setNewProfileDraft] = useState<AccountRow>({
     UID: "",
@@ -256,6 +262,12 @@ export function App() {
 
   useEffect(() => {
     refreshAll();
+    const unsub = window.mmp.onOpenProfilesChanged?.((uids) => {
+      setOpenProfiles(uids);
+    });
+    return () => {
+      if (typeof unsub === "function") unsub();
+    };
   }, []);
 
   const extById = useMemo(() => new Map(extensions.map((ext) => [ext.id, ext])), [extensions]);
@@ -425,6 +437,10 @@ export function App() {
     }
 
     const delayMs = Math.max(0, Math.min(30, Number(bulkDelaySeconds) || 0)) * 1000;
+    const availW = window.screen.availWidth || 1920;
+    const availH = window.screen.availHeight || 1040;
+    const gridCols = bulkWindowLayout === "grid-3x2" ? 3 : bulkWindowLayout === "grid-2x2" ? 2 : 0;
+    const gridRows = gridCols > 0 ? 2 : 0;
     setBulkLaunching({ current: 0, total: targets.length });
     let okCount = 0;
     const failedUids: string[] = [];
@@ -432,11 +448,21 @@ export function App() {
     for (let i = 0; i < targets.length; i += 1) {
       const acc = targets[i];
       setBulkLaunching({ current: i + 1, total: targets.length });
+      let windowBounds: { x: number; y: number; width: number; height: number } | null = null;
+      if (gridCols > 0 && gridRows > 0) {
+        const slot = i % (gridCols * gridRows);
+        const col = slot % gridCols;
+        const row = Math.floor(slot / gridCols);
+        const cellW = Math.floor(availW / gridCols);
+        const cellH = Math.floor(availH / gridRows);
+        windowBounds = { x: col * cellW, y: row * cellH, width: cellW, height: cellH };
+      }
       try {
         await window.mmp.launchBrowser({
           account: acc,
           mode: bulkLaunchMode,
           overrideUrl: customUrl,
+          windowBounds,
         });
         okCount += 1;
       } catch {
@@ -466,6 +492,56 @@ export function App() {
     const openUids = await window.mmp.getOpenProfiles().catch(() => []);
     setOpenProfiles(openUids);
     notify("info", `Đã đóng ${toClose.length} trình duyệt đang mở.`);
+  };
+
+  const handleBulkSaveOpenCookies = async (targetUids?: string[]) => {
+    setSavingBulkCookies(true);
+    try {
+      const res = await window.mmp.saveBrowserCookiesBulk(targetUids);
+      await refreshAll();
+      notify(res.failed.length ? "info" : "success", res.message);
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    } finally {
+      setSavingBulkCookies(false);
+    }
+  };
+
+  const handleBulkImportSubmit = async () => {
+    const lines = bulkImportText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
+    if (!lines.length) {
+      notify("error", "Hãy dán ít nhất 1 dòng profile.");
+      return;
+    }
+    const accounts = lines.map((line) => {
+      const parts = line.split("|").map((p) => p.trim());
+      const uid = parts[0] || "";
+      return {
+        UID: uid,
+        Name: parts[1] || uid,
+        Email: parts[2] || "",
+        Password: parts[3] || "",
+        TwoFA: parts[4] || "",
+        Proxy: parts[5] || "",
+        Cookie: parts[6] || "",
+        Platform: bulkImportPlatform || "TikTok",
+        StartUrl: settings?.defaultStartUrl || "https://www.tiktok.com/",
+        Folder: bulkImportGroup || "Không có nhóm",
+      };
+    }).filter((a) => a.UID);
+
+    try {
+      const res = await window.mmp.bulkCreateAccounts({ accounts });
+      setShowBulkImport(false);
+      setBulkImportText("");
+      await refreshAll();
+      notify("success", res.message);
+    } catch (err) {
+      notify("error", err instanceof Error ? err.message : String(err));
+    }
   };
 
   const handleCreateGroup = async () => {
@@ -817,6 +893,17 @@ export function App() {
                   <UserPlus size={15} />
                   Thêm Profile mới
                 </button>
+                <button
+                  type="button"
+                  className="secondary-button full-btn compact-btn"
+                  onClick={() => {
+                    setBulkImportGroup(selectedGroup !== "__ALL__" ? selectedGroup : "Không có nhóm");
+                    setShowBulkImport(true);
+                  }}
+                >
+                  <FolderPlus size={14} />
+                  Nhập hàng loạt
+                </button>
                 <div className="mmp-isolation-pill">
                   <ShieldCheck size={14} />
                   <span>Lưu riêng tại D:\ManagerMultiProfile_data</span>
@@ -847,6 +934,18 @@ export function App() {
                   </div>
 
                   <div className="mmp-hero-actions">
+                    {openProfiles.length > 0 && (
+                      <button
+                        type="button"
+                        className="secondary-button compact-btn"
+                        disabled={savingBulkCookies}
+                        title="Lưu toàn bộ Cookie của tất cả profile đang mở vào Database & ổ đĩa trong 1 click"
+                        onClick={() => handleBulkSaveOpenCookies()}
+                      >
+                        <Save size={14} className={savingBulkCookies ? "spin" : ""} />
+                        {savingBulkCookies ? "Đang lưu CK..." : `Lưu CK đang mở (${openProfiles.length})`}
+                      </button>
+                    )}
                     <button
                       type="button"
                       className="secondary-button compact-btn"
@@ -1562,22 +1661,35 @@ export function App() {
               </div>
             )}
 
-            <label style={{ display: "block", marginBottom: 4 }}>
-              <span style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4, color: "var(--text-muted)" }}>
-                Độ trễ giữa mỗi profile (giây) — tránh giật máy khi mở nhiều profile
-              </span>
-              <input
-                type="number"
-                min={0}
-                max={30}
-                step={0.5}
-                className="mmp-input"
-                style={{ width: 120 }}
-                disabled={Boolean(bulkLaunching)}
-                value={bulkDelaySeconds}
-                onChange={(e) => setBulkDelaySeconds(Number(e.target.value))}
-              />
-            </label>
+            <div className="modal-form-grid" style={{ marginBottom: 4 }}>
+              <label>
+                <span>Bố cục cửa sổ trình duyệt</span>
+                <select
+                  className="mmp-select full"
+                  value={bulkWindowLayout}
+                  disabled={Boolean(bulkLaunching)}
+                  onChange={(e) => setBulkWindowLayout(e.target.value as "maximized" | "grid-2x2" | "grid-3x2")}
+                >
+                  <option value="maximized">Toàn màn hình (Maximized)</option>
+                  <option value="grid-2x2">Chia lưới 2×2 (4 cửa sổ cùng lúc)</option>
+                  <option value="grid-3x2">Chia lưới 3×2 (6 cửa sổ cùng lúc)</option>
+                </select>
+              </label>
+
+              <label>
+                <span>Độ trễ giữa mỗi profile (giây)</span>
+                <input
+                  type="number"
+                  min={0}
+                  max={30}
+                  step={0.5}
+                  className="mmp-input full"
+                  disabled={Boolean(bulkLaunching)}
+                  value={bulkDelaySeconds}
+                  onChange={(e) => setBulkDelaySeconds(Number(e.target.value))}
+                />
+              </label>
+            </div>
 
             <div className="modal-actions">
               <button
@@ -1629,6 +1741,61 @@ export function App() {
               </button>
               <button type="button" className="primary-button" onClick={handleMoveSelectedToGroup}>
                 Chuyển nhóm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: BULK IMPORT PROFILES */}
+      {showBulkImport && (
+        <div className="modal-backdrop" onClick={() => setShowBulkImport(false)}>
+          <div className="modal-box wide" onClick={(e) => e.stopPropagation()}>
+            <h3>Nhập Profile hàng loạt</h3>
+            <p className="muted-text" style={{ marginTop: 0, marginBottom: 10 }}>
+              Mỗi dòng 1 profile theo định dạng: <code>UID|Tên|Email|Mật khẩu|2FA|Proxy|Cookie</code> (chỉ bắt buộc cột đầu là UID/Mã profile).
+            </p>
+            <div className="modal-form-grid" style={{ marginBottom: 10 }}>
+              <label>
+                <span>Nhóm đích</span>
+                <select
+                  className="mmp-select full"
+                  value={bulkImportGroup}
+                  onChange={(e) => setBulkImportGroup(e.target.value)}
+                >
+                  <option value="Không có nhóm">Không có nhóm</option>
+                  {(data?.groups || [])
+                    .filter((g) => g.name !== "Không có nhóm")
+                    .map((g) => (
+                      <option key={g.name} value={g.name}>
+                        {g.name}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <label>
+                <span>Nền tảng mặc định</span>
+                <input
+                  type="text"
+                  className="mmp-input full"
+                  value={bulkImportPlatform}
+                  onChange={(e) => setBulkImportPlatform(e.target.value)}
+                />
+              </label>
+            </div>
+            <textarea
+              rows={7}
+              className="mmp-textarea"
+              placeholder={"tiktok_shop_01|Shop Khải Hoàn 1\ntiktok_shop_02|Shop Khải Hoàn 2|mail@example.com|pass123"}
+              value={bulkImportText}
+              onChange={(e) => setBulkImportText(e.target.value)}
+            />
+            <div className="modal-actions">
+              <button type="button" className="secondary-button" onClick={() => setShowBulkImport(false)}>
+                Hủy
+              </button>
+              <button type="button" className="primary-button" onClick={handleBulkImportSubmit}>
+                <FolderPlus size={15} /> Nhập danh sách
               </button>
             </div>
           </div>
