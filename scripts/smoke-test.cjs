@@ -79,7 +79,7 @@ async function main() {
       path.join(extSrc, "manifest.json"),
       JSON.stringify({ manifest_version: 3, name: "TikTok Helper", version: "1.3.0" }),
     );
-    const upd = extSvc.updateAllExtensionsFromSource();
+    const upd = await extSvc.updateAllExtensionsFromSource();
     if (upd.updatedCount !== 1 || upd.results[0].version !== "1.3.0" || upd.results[0].affectedProfiles !== 2) {
       throw new Error("Extension update failed: " + JSON.stringify(upd));
     }

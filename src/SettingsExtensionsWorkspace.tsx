@@ -66,6 +66,7 @@ export function SettingsExtensionsWorkspace({
   const [busyAction, setBusyAction] = useState<string>("");
   const [lastResult, setLastResult] = useState<BulkInstallExtensionsResult | null>(null);
   const [startUrlDraft, setStartUrlDraft] = useState(settings?.defaultStartUrl || "https://www.tiktok.com/");
+  const [urlUpdateModal, setUrlUpdateModal] = useState<{ ext: ExtensionItem; url: string } | null>(null);
 
   const extById = useMemo(() => new Map(extensions.map((ext) => [ext.id, ext])), [extensions]);
 
@@ -256,23 +257,29 @@ export function SettingsExtensionsWorkspace({
     }
   };
 
-  const handleUpdateExtUrl = async (ext: ExtensionItem) => {
+  const handleUpdateExtUrl = (ext: ExtensionItem) => {
     const defaultUrl =
       ext.remoteZipUrl ||
       (ext.name.toLowerCase().includes("tiktok")
         ? "https://github.com/datdtpl-maker/TikTok-Auto-Reply-Extension/archive/refs/heads/main.zip"
         : "");
-    const zipUrl = window.prompt(
-      `Nhập link tải file .ZIP (GitHub) để cập nhật "${ext.name}":`,
-      defaultUrl,
-    );
-    if (!zipUrl || !zipUrl.trim()) return;
+    setUrlUpdateModal({ ext, url: defaultUrl });
+  };
+
+  const handleConfirmUpdateExtUrl = async () => {
+    if (!urlUpdateModal) return;
+    const { ext, url } = urlUpdateModal;
+    if (!url.trim()) {
+      onNotify("error", "Vui lòng nhập link tải file .ZIP (GitHub).");
+      return;
+    }
     setBusyAction(`upd-url-${ext.id}`);
     try {
       const res = await window.mmp.updateExtensionFromUrl({
         extensionId: ext.id,
-        zipUrl: zipUrl.trim(),
+        zipUrl: url.trim(),
       });
+      setUrlUpdateModal(null);
       await onRefreshAll();
       onNotify("success", res.message);
     } catch (err) {
@@ -815,6 +822,47 @@ export function SettingsExtensionsWorkspace({
           </table>
         </div>
       </section>
+
+      {/* MODAL: UPDATE EXTENSION FROM GITHUB URL (Electron-safe, no window.prompt) */}
+      {urlUpdateModal && (
+        <div className="modal-backdrop" onClick={() => !busyAction && setUrlUpdateModal(null)}>
+          <div className="modal-box wide" onClick={(e) => e.stopPropagation()}>
+            <h3>Cập nhật "{urlUpdateModal.ext.name}" từ GitHub (.ZIP)</h3>
+            <p className="muted-text" style={{ marginTop: 0, marginBottom: 10 }}>
+              Tải trực tiếp bản mới nhất từ link GitHub ZIP và ghi đè tại chỗ (giữ nguyên Extension ID và toàn bộ cài đặt cũ cho mọi profile).
+            </p>
+            <input
+              type="text"
+              className="mmp-input full"
+              autoFocus
+              disabled={Boolean(busyAction)}
+              value={urlUpdateModal.url}
+              onChange={(e) => setUrlUpdateModal({ ...urlUpdateModal, url: e.target.value })}
+              onKeyDown={(e) => e.key === "Enter" && handleConfirmUpdateExtUrl()}
+              placeholder="https://github.com/.../archive/refs/heads/main.zip"
+            />
+            <div className="modal-actions">
+              <button
+                type="button"
+                className="secondary-button"
+                disabled={Boolean(busyAction)}
+                onClick={() => setUrlUpdateModal(null)}
+              >
+                Hủy
+              </button>
+              <button
+                type="button"
+                className="primary-button"
+                disabled={Boolean(busyAction)}
+                onClick={handleConfirmUpdateExtUrl}
+              >
+                <Globe2 size={14} className={busyAction ? "spin" : ""} />
+                {busyAction ? "Đang tải từ GitHub..." : "Tải & Cập nhật ngay"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

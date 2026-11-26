@@ -378,14 +378,22 @@ class ExtensionService {
     }
   }
 
-  updateExtensionFromSource(extensionId) {
+  async updateExtensionFromSource(extensionId) {
     const id = clean(extensionId);
     const registry = this.loadRegistry();
     const ext = registry.extensions.find((item) => item.id === id);
     if (!ext) throw new Error("Không tìm thấy extension trong kho.");
     const src = clean(ext.sourcePath);
+    const remoteUrl = clean(ext.remoteZipUrl);
+
+    // Ưu tiên kéo từ remoteZipUrl nếu đã lưu link GitHub và không có thư mục source code local
+    if (remoteUrl && (!src || !fs.existsSync(src) || !fs.statSync(src).isDirectory())) {
+      return this.updateExtensionFromUrl(id, remoteUrl);
+    }
+
     if (!src || !fs.existsSync(src)) {
-      throw new Error(`Không tìm thấy nguồn gốc của "${ext.name}" (${src || "trống"}). Hãy chọn thư mục hoặc file .ZIP bản mới.`);
+      if (remoteUrl) return this.updateExtensionFromUrl(id, remoteUrl);
+      throw new Error(`Không tìm thấy nguồn gốc của "${ext.name}" (${src || "trống"}). Hãy bấm nút "GitHub" hoặc chọn thư mục/.ZIP bản mới.`);
     }
     const stat = fs.statSync(src);
     if (stat.isDirectory()) {
@@ -439,7 +447,7 @@ class ExtensionService {
     }
   }
 
-  updateAllExtensionsFromSource() {
+  async updateAllExtensionsFromSource() {
     const registry = this.loadRegistry();
     if (!registry.extensions.length) {
       throw new Error("Chưa có extension nào trong kho để cập nhật.");
@@ -448,7 +456,7 @@ class ExtensionService {
     const errors = [];
     for (const ext of registry.extensions) {
       try {
-        const res = this.updateExtensionFromSource(ext.id);
+        const res = await this.updateExtensionFromSource(ext.id);
         results.push(res);
       } catch (err) {
         errors.push({
